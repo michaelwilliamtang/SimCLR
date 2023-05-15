@@ -11,38 +11,23 @@ import torch.utils.data as data
 import argparse
 import torch.backends.cudnn as cudnn
 from torchvision import models
+from datetime import datetime
+from simclr import SimCLR
 
 # from models.resnet_simclr import ResNetSimCLR
-from models.mlp_simclr import MLPSimCLR as mlp_simclr
+from models.mlp_simclr import MLPSimCLR# as mlp_simclr
 from data_aug.golden_dataset import GoldenDataset
 
-# load data
-# dataset params (currently cannot change)
-query_k = 1 # number of images per query scene
-db_k = 2 # number of images per candidate scene
-
-# load dataset metadata
-data_path = '/n/fs/scratch/dshustin/srn_cars_val_retrieval_large.pickle'
-# embeds_path = '/n/fs/scratch/dshustin/srn_cars_val_effnet_large_index.pickle'
-embeds_path = '/n/fs/scratch/dshustin/srn_cars_val_shap_e_large_index.pickle'
-print('Loading data from', data_path)
-print('Loading embeds from', embeds_path)
-with open(data_path, 'rb') as f:
-    db_ids, _, _, _ = pickle.load(f)
-with open(embeds_path, 'rb') as f:
-    db_id_to_embed_paths, _ = pickle.load(f)
-
-# create dataset object
-train_dataset = GoldenDataset(db_k, db_ids, db_id_to_embed_paths)
-
-# embed dim
-embed_dim = train_loader.dataset[0][0][0].size()[0]
-print('embed_dim:', embed_dim)
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
+# load data
+# dataset params (currently cannot change)
+query_k = 1 # number of images per query scene
+db_k = 20 # number of images per candidate scene
 
+# Parse arguments
 parser = argparse.ArgumentParser(description='PyTorch SimCLR')
 parser.add_argument('-data', metavar='DIR', default='./datasets',
                     help='path to dataset')
@@ -53,7 +38,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                     help='model architecture: ' +
                          ' | '.join(model_names) +
                          ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=12, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -84,8 +69,35 @@ parser.add_argument('--n-views', default=2, type=int, metavar='N',
                     help='Number of views for contrastive learning training.')
 parser.add_argument('--gpu-index', default=0, type=int, help='Gpu index.')
 
-args = parser.parse_args("")
+parser.add_argument('--hidden-dim', default=1000, type=int, help='Hidden layer width')
+parser.add_argument('--hidden-num', default=3, type=int, help='Number of hidden layers')
+parser.add_argument('--proj-dim', default=1000, type=int, help='Representation dimension')
+parser.add_argument('--feature', default='shap_e', choices=['shap_e', 'effnet'], type=str, help='Feature/embedding space to train on')
+parser.add_argument('--sweep-path', required=False, type=str, help='Path to file in which to save hyperparameters')
+parser.add_argument('--db-k', default=20, type=int, help='Number of views per entry in training dataset')
+parser.add_argument('--data-path', required=True, type=str, help='Path containing data split')
+parser.add_argument('--embeds-path', required=True, type=str, help='Path containing index of embedding vector files')
+
+args = parser.parse_args()
 assert args.n_views == 2, "Only two view training is supported. Please use --n-views 2."
+
+
+print(f"[{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Starting training!")
+# load dataset metadata
+data_path = args.data_path #'/n/fs/scratch/dshustin/srn_cars_val_retrieval_large.pickle'
+# embeds_path = '/n/fs/scratch/dshustin/srn_cars_val_effnet_large_index.pickle'
+embeds_path = args.embeds_path #f'/n/fs/scratch/dshustin/srn_cars_val_{args.feature}_large_index.pickle'
+print('Loading data from', data_path)
+print('Loading embeds from', embeds_path)
+with open(data_path, 'rb') as f:
+    db_ids, _, _, _ = pickle.load(f)
+with open(embeds_path, 'rb') as f:
+    db_id_to_embed_paths, _ = pickle.load(f)
+
+# create dataset object
+train_dataset = GoldenDataset(args.db_k, db_ids, db_id_to_embed_paths)
+
+
 # check if gpu training is available
 if not args.disable_cuda and torch.cuda.is_available():
     args.device = torch.device('cuda')
@@ -99,8 +111,14 @@ train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=args.batch_size, shuffle=True,
     num_workers=args.workers, pin_memory=True, drop_last=True)
 
+# embed dim
+embed_dim = train_loader.dataset[0][0][0].size()[0]
+print('embed_dim:', embed_dim)
+
+
 # model = ResNetSimCLR(base_model=args.arch, out_dim=args.out_dim)
-model = MLPSimCLR(in_dim=embed_dim, out_dim=args.out_dim)
+model = MLPSimCLR(in_dim=embed_dim, out_dim=args.out_dim, proj_dim=args.proj_dim, n_hidden=args.hidden_num, hid_dim=args.hidden_dim)
+
 
 optimizer = torch.optim.Adam(model.parameters(), args.lr, weight_decay=args.weight_decay)
 
@@ -111,3 +129,6 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(trai
 with torch.cuda.device(args.gpu_index):
     simclr = SimCLR(model=model, optimizer=optimizer, scheduler=scheduler, args=args)
     simclr.train(train_loader)
+
+    
+print(f"[{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Done training.")

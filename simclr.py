@@ -63,7 +63,13 @@ class SimCLR(object):
 
         n_iter = 0
         logging.info(f"Start SimCLR training for {self.args.epochs} epochs.")
+        logging.info(f"Training on {self.args.feature} embedding space.")
         logging.info(f"Training with gpu: {self.args.disable_cuda}.")
+        logging.info(f"Training with model architecture: --hidden-num={self.args.hidden_num} --hidden-dim={self.args.hidden_dim} --out-dim={self.args.out_dim} --proj-dim={self.args.proj_dim}")
+
+        # CHANGE: init these since there is a bug where they are reference w/o initialization during logging.debug
+        loss = 1
+        top1 = [0]
 
         for epoch_counter in range(self.args.epochs):
             for images, _ in tqdm(train_loader):
@@ -97,13 +103,22 @@ class SimCLR(object):
                 self.scheduler.step()
             logging.debug(f"Epoch: {epoch_counter}\tLoss: {loss}\tTop1 accuracy: {top1[0]}")
 
+            
         logging.info("Training has finished.")
+        
         # save model checkpoints
         checkpoint_name = 'checkpoint_{:04d}.pth.tar'.format(self.args.epochs)
         save_checkpoint({
             'epoch': self.args.epochs,
-            'arch': self.args.arch,
+            'arch': self.model.arch,
             'state_dict': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
+            'db_k': self.args.db_k
         }, is_best=False, filename=os.path.join(self.writer.log_dir, checkpoint_name))
+        
+        
+        # HACK: hacky way to aggregate sweep
+        if self.args.sweep_path is not None:
+            with open(self.args.sweep_path, 'a') as f:
+                f.write(f'--db-k={self.args.db_k}\t--hidden-num={self.args.hidden_num}\t--hidden-dim={self.args.hidden_dim}\t--out-dim={self.args.out_dim}\t--proj-dim={self.args.proj_dim}\tloss={loss}\ttop1={top1[0]}\tpath={os.path.join(self.writer.log_dir, checkpoint_name)}\n')
         logging.info(f"Model checkpoint and metadata has been saved at {self.writer.log_dir}.")

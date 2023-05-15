@@ -29,8 +29,8 @@ class GoldenDataset(data.Dataset):
         # returns a list of 2 embeddings representing 2 random embedded views
         # of the idx-th scene
 
-        idxs = random.sample(range(db_k), self.positive_k)
-        all_embed_paths = np.array(db_id_to_embed_paths[db_ids[idx]]) # temporarily to np array
+        idxs = random.sample(range(self.db_k), self.positive_k)
+        all_embed_paths = np.array(self.db_id_to_embed_paths[self.db_ids[idx]]) # temporarily to np array
         embed_paths = all_embed_paths[idxs].tolist() # back to list
         # dummy label list otherwise it will ignore the second element of my list thinking it's a label
         return [torch.from_numpy(np.load(embed_path)) for embed_path in embed_paths], []
